@@ -62,6 +62,8 @@ AI 会将以下格式的命令发给用户：
 | 3. 白名单 set | `nft list set inet fw4 lan_ac_white_ips 2>/dev/null` | 🟢 | 含目标设备 IP | 白名单模式非白名单设备全部 RETURN |
 | 4. 规则确认 | `nft list chain inet fw4 openclash \| grep -E 'saddr\|ether saddr'` | 🟢 | AC 规则在代理规则之前 | 顺序异常→重载防火墙 |
 
+> DNS 路径提示：`enable_redirect_dns=2`（防火墙转发）自动满足；`=0`（禁用）时切换分流会提示（代理侧始终提示，直连侧仅 Fake-IP 提示）。各模式的实际影响（Redir-Host 直连 DNS 经内核无影响、Fake-IP 兜底重定向不断网但直连失效）与锁定规则见 `09-settings-dns-ac-ipv6.md` §9.2。
+
 #### 14.2.4 TUN 模式启动失败
 
 | 步骤 | 命令 | 安全 | 期望输出 | 异常处理 |

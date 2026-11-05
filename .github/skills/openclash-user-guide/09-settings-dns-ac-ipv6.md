@@ -26,11 +26,12 @@
 - **默认**: 1
 - **说明**:
   - **值1（Dnsmasq 转发）**: 让网关自带的 `dnsmasq` 把 LAN 客户端的 DNS 查询转交给核心（`dns_port=7874`），可沿用 dnsmasq 的缓存与分流。
-  - **值2（防火墙重定向）**: 在网络层把发往 53 端口的请求直接转给核心，跳过 dnsmasq，更快；Fake-IP 模式下使用 LAN 访问控制必须选此项
+  - **值2（防火墙重定向）**: 在网络层把发往 53 端口的请求直接转给核心，跳过 dnsmasq，更快；Fake-IP 模式下使用 LAN 访问控制时，此项可自动满足「直连设备不经内核、代理设备经内核」的 DNS 分流
+  - **值0（禁用）**: 不做任何 DNS 劫持；Fake-IP 与 Redir-Host 模式下仍可使用 LAN 访问控制，但需用户自行保证 DNS 路径（第三方 DNS 转发或系统默认 DNS），见 §9.2
 - **Mihomo 对应**: DNS 监听配置 `dns.listen: 0.0.0.0:7874`
 - **实现详解**:
   - **值1 (Dnsmasq)**: `change_dnsmasq()` 函数先备份 dnsmasq 原有配置到 `openclash.config.*`，然后设置 `dhcp.@dnsmasq[0].server=127.0.0.1#<dns_port>`，`noresolv=1`，`cachesize=0`。效果：所有 LAN 客户端的 DNS 查询 → dnsmasq → 转发到 Mihomo DNS (7874) → Mihomo 根据 `enhanced-mode` 处理。
-  - **值2 (防火墙)**: 创建 `openclash_dns_redirect` nftables 链，对目标端口 53 的 UDP/TCP 流量 DNAT 到 `dns_port`。同时保留 dnsmasq 处理本地 DNS 缓存。此模式允许 `lan_ac_*` 访问控制（需要 Fake-IP 模式）。
+  - **值2 (防火墙)**: 创建 `openclash_dns_redirect` nftables 链，对目标端口 53 的 UDP/TCP 流量 DNAT 到 `dns_port`。同时保留 dnsmasq 处理本地 DNS 缓存。此模式允许 `lan_ac_*` 访问控制（Fake-IP 模式）并自动按设备分流 DNS。
   - **恢复**: `revert_dnsmasq()` 还原所有原始 dnsmasq 配置（servers、noresolv、resolvfile、cachesize）。规则细节（AC 过滤 / router_self_proxy OUTPUT 劫持等）见 `06-firewall-options-dnsmasq.md` §6.2「各选项对防火墙规则的具体影响 → `enable_redirect_dns`」。
 
 #### 9.1.2 flush_dns_cache — 清空 DNS 缓存按钮 (Flush DNS Cache)
@@ -72,8 +73,11 @@
 > `init.d/openclash` 的 `firewall_lan_ac_traffic()` 函数和 `set_firewall()` 中的 `ipset`/`nft set` 创建逻辑。
 > 对于 IP 段/CIDR 的写法问题，解释 `192.168.1.0/24` 等标准 CIDR 格式。
 > **注意**：如需按接口/用户/DSCP 等维度精细绕过，请使用「插件设置页面底部 → 来源流量访问控制」（`10-settings-geo-misc-src.md` §10.3）。
-> **依赖**: `enable_redirect_dns=2`（防火墙重定向模式）仅在 **Fake-IP 模式**下强制要求——因为 Fake-IP 返回虚拟 IP，客户端不知道真实目标，
-> 必须通过防火墙重定向 DNS 才能实现基于真实目标的访问控制。Redir-Host 模式下此依赖为可选（LuCI UI 中同样要求，但底层机制不同）。
+> **依赖**: Fake-IP 模式下 DNS 查询需**按设备**分流——被排除（直连）的设备不应经过内核（否则拿到 Fake-IP，直连失效，但不会断网），代理设备必须经过内核；Redir-Host 下直连设备的 DNS 经内核无影响。
+> - `enable_redirect_dns=2`（防火墙重定向）：由防火墙自动完成，开箱可用。
+> - `enable_redirect_dns=0`（禁用）：Fake-IP 与 Redir-Host 下均允许访问控制，DNS 路径需用户自行保证（第三方 DNS 转发或系统默认 DNS）。切换设备后卡片顶部会短暂提示（与锁定警告同款样式）：切换为代理始终提示；切换为直连只在 Fake-IP 下提示（Redir-Host 下不提示）。Fake-IP 下直连设备若经内核拿到 Fake-IP，fake-IP 段兜底重定向保证不断网，但流量被代理、直连失效。
+> - `enable_redirect_dns=1`（Dnsmasq 转发）：Fake-IP 下所有客户端都会经内核解析并拿到 Fake-IP；直连设备的流量会命中 fake-IP 段的兜底重定向（不会断网，但会被代理、直连失效）→ 运行状态页锁定分流开关，需先点提示条「切换」改为防火墙转发。
+> - Redir-Host 系列不强制依赖防火墙转发；`enable_redirect_dns=0` 时只提示代理侧（直连 DNS 经内核无影响）。
 
 #### 9.2.1 lan_ac_mode — 局域网访问控制模式 (LAN Access Control Mode)
 - **UCI 选项**: `openclash.@openclash[0].lan_ac_mode`
@@ -82,7 +86,7 @@
 - **说明**:
   - **黑名单模式**: 列表中的设备/主机不走代理 (直连)
   - **白名单模式**: 只有列表中的设备/主机走代理
-- **依赖**: `enable_redirect_dns=2` (仅防火墙重定向模式) + Redir-Host 系列模式（LuCI 界面中 `lan_ac_mode` 及其 IP 列表同时要求 `en_mode` 为 redir-host 系列；MAC 列表仅要求 `lan_ac_mode` 匹配）
+- **依赖**: `enable_redirect_dns` 为 `2`（防火墙重定向）或 `0`（禁用，需自行分流 DNS），或 `en_mode` 为 Redir-Host 系列（LuCI 界面中 `lan_ac_mode` 及 IP 列表按此显示；MAC 列表仅要求 `lan_ac_mode` 匹配）；Fake-IP + `1`（Dnsmasq 转发）时运行状态页锁定分流开关
 - **实现细节**: fw4 通过 `nft` 的 `ether saddr`（MAC）与 `ip saddr`（IP）在 `inet fw4` 各代理链中匹配；fw3 通过 `ipset hash:mac` / `hash:ip` 配合 `-m set --match-set` 匹配。黑白名单决定规则的 return 行为取反（黑名单=匹配到则 return 直连，白名单=不匹配则 return 直连）。
 - **集合维护**: 六个 `lan_ac_*` 集合在启动时无条件创建（与列表是否为空无关），运行状态页的逐设备分流通过 `openclash_client_ac.sh` 热更新集合内容，不重建防火墙；仅在切换默认策略（`lan_ac_mode`）时才重建规则。
 

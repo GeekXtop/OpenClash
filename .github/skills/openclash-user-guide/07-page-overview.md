@@ -122,6 +122,8 @@
 > 设备加入网络后自动出现；速率每 2 秒刷新，无流量时降为 5 秒。逐设备统计依赖 `nf_conntrack_acct=1`（`start_run_core()` 写入）。
 >
 > 内核未启动时上述分流仍可编辑：写入的是 `lan_ac_*` UCI 列表，下次启动由 `start_run_core()` 生成集合并生效。
+>
+> 本地 DNS 劫持为「关闭」（`enable_redirect_dns=0`）时，Fake-IP 与 Redir-Host 模式都可以分流，DNS 路径由用户自行安排（第三方 DNS 转发或系统默认 DNS）；切换设备后卡片顶部会短暂提示（与锁定警告同款样式）：代理侧始终提示，直连侧只在 Fake-IP 提示。各模式的实际影响与锁定规则见 `09-settings-dns-ac-ipv6.md` §9.2。Fake-IP + 「Dnsmasq 转发」（1）时开关被锁定，提示条「切换」会改为防火墙转发（重启 dnsmasq，不重启内核）。
 
 **卡片视图的 8 项指标**（通过 WebSocket 与 XHR 轮询更新，数据源见 `15-api.md` §15.1.1）：
 
